@@ -2,6 +2,11 @@
 name = "bosun"
 version = "0.1.0"
 edition = "2024"
+description = "System facts, shipped to your door!"
+repository = "https://github.com/caravel-io/bosun"
+readme = "README.md"
+keywords = ["configuration", "management", "lua", "rust", "facts", "system", "information"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "bosun"

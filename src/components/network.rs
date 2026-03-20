@@ -156,10 +156,14 @@ fn get_hostname() -> Result<String> {
 fn get_domain() -> Result<Option<String>> {
     let domain =
         slurp(Path::new("/proc/sys/kernel/domainname")).context("failed to read domainname")?;
-    if domain.is_empty() || domain == "(none)" {
-        return Ok(None);
+    Ok(parse_domain(&domain))
+}
+
+fn parse_domain(s: &str) -> Option<String> {
+    if s.is_empty() || s == "(none)" {
+        return None;
     }
-    Ok(Some(domain))
+    Some(s.to_string())
 }
 
 fn build_fqdn(hostname: &str, domain: &Option<String>) -> Option<String> {
@@ -306,6 +310,21 @@ mod tests {
         assert_eq!(eth.addr_info.len(), 1);
         assert_eq!(eth.addr_info[0].family, "inet");
         assert_eq!(eth.addr_info[0].local, "192.168.64.8");
+    }
+
+    #[test]
+    fn test_parse_domain_none() {
+        assert!(parse_domain("(none)").is_none());
+    }
+
+    #[test]
+    fn test_parse_domain_empty() {
+        assert!(parse_domain("").is_none());
+    }
+
+    #[test]
+    fn test_parse_domain_valid() {
+        assert_eq!(parse_domain("example.com"), Some("example.com".to_string()));
     }
 
     #[test]

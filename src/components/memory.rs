@@ -90,6 +90,15 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_meminfo_units() {
+        let content = "HugePages_Total: 1024 B\nDirectMap2M:       2 MB\nSomeValue:         3 mB\n";
+        let meminfo = parse_meminfo(content);
+        assert_eq!(meminfo.get("HugePages_Total"), Some(&1024));
+        assert_eq!(meminfo.get("DirectMap2M"), Some(&2_000_000));
+        assert_eq!(meminfo.get("SomeValue"), Some(&3_000_000));
+    }
+
+    #[test]
     fn test_build_memory_facts() {
         let mut meminfo = HashMap::new();
         meminfo.insert("MemTotal".to_string(), 16777216);

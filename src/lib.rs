@@ -2,7 +2,7 @@ pub mod components;
 
 pub mod filesystem;
 
-use crate::components::{cpu, kernel, memory, mount, network, os};
+use crate::components::{cpu, kernel, memory, mount, network, os, uptime};
 use anyhow::Result;
 use rayon::prelude::*;
 use serde_json::{Map, Value};
@@ -20,8 +20,9 @@ pub fn run() -> Result<()> {
         Box::new(cpu::CPUComponent::new()),
         Box::new(memory::MemoryComponent::new()),
         Box::new(os::OSComponent::new()),
-        Box::new(mount::MountComponent::new()),
         Box::new(network::NetworkComponent::new()),
+        Box::new(mount::MountComponent::new()),
+        Box::new(uptime::UptimeComponent::new()),
     ];
 
     // Build all the components in parallel into pairs of information

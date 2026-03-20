@@ -20,9 +20,9 @@ pub fn run() -> Result<()> {
         Box::new(cpu::CPUComponent::new()),
         Box::new(memory::MemoryComponent::new()),
         Box::new(os::OSComponent::new()),
+        Box::new(uptime::UptimeComponent::new()),
         Box::new(network::NetworkComponent::new()),
         Box::new(mount::MountComponent::new()),
-        Box::new(uptime::UptimeComponent::new()),
     ];
 
     // Build all the components in parallel into pairs of information

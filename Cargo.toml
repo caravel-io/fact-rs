@@ -1,6 +1,6 @@
 [package]
 name = "fact-rs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "System facts, shipped to your door!"
 repository = "https://github.com/caravel-io/fact-rs"
@@ -31,4 +31,3 @@ tracing-subscriber = { version = "0.3.23", optional = true }
 
 [dev-dependencies]
 tempfile = "3.27.0"
-

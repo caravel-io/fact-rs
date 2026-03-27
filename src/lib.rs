@@ -12,7 +12,7 @@ pub trait Collector: Send + Sync {
     fn collect(&self) -> Result<serde_json::Value>;
 }
 
-pub fn run() -> Result<()> {
+pub fn build() -> Result<Map<String, Value>> {
     // Register all the components here. Each component
     // implements the Component trait
     let components: Vec<Box<dyn Collector>> = vec![
@@ -42,8 +42,17 @@ pub fn run() -> Result<()> {
 
     // Collect all the pairs into the main facts structure
     let facts: Map<String, Value> = pairs.into_iter().collect();
+    Ok(facts)
+}
 
+pub fn display(facts: Map<String, Value>) -> Result<()> {
     let _j = serde_json::to_string(&Value::Object(facts))?;
     println!("{}", _j);
+    Ok(())
+}
+
+pub fn run() -> Result<()> {
+    let facts = build()?;
+    display(facts)?;
     Ok(())
 }

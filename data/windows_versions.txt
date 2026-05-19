@@ -1,0 +1,15 @@
+# Windows build number to feature update name mapping
+# Format: {build_number} {release_name}
+
+# Windows 10
+19041 2004
+19042 20H2
+19043 21H1
+19044 21H2
+19045 22H2
+
+# Windows 11
+22000 21H2
+22621 22H2
+22631 23H2
+26100 24H2

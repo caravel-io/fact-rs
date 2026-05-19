@@ -15,6 +15,28 @@ pub fn slurp(path: impl AsRef<Path>) -> Result<String> {
         .map(|s| s.trim().to_string())
 }
 
+#[cfg(target_os = "macos")]
+pub fn sysctl_n(key: &str) -> Result<String> {
+    let output = std::process::Command::new("sysctl")
+        .arg("-n")
+        .arg(key)
+        .output()
+        .with_context(|| format!("failed to run sysctl -n {key}"))?;
+    Ok(String::from_utf8(output.stdout)
+        .context("sysctl output is not valid UTF-8")?
+        .trim()
+        .to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub fn run_powershell(script: &str) -> Result<String> {
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .context("failed to run powershell")?;
+    String::from_utf8(output.stdout).context("powershell output is not valid UTF-8")
+}
+
 #[allow(dead_code)]
 pub fn get_dirs_in_path(path: PathBuf) -> Result<Vec<String>> {
     let mut dirs = Vec::new();

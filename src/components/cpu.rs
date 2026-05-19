@@ -1,11 +1,3 @@
-// This file was unfortunately mostly written by claude,
-// though reviewed by me every step of the way.
-
-use std::collections::HashSet;
-use std::path::Path;
-
-use crate::filesystem::slurp;
-
 use crate::Collector;
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -20,11 +12,12 @@ pub struct CPUFacts {
     pub architecture: String,
 }
 
+#[derive(Default)]
 pub struct CPUComponent;
 
 impl CPUComponent {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
@@ -39,32 +32,31 @@ impl Collector for CPUComponent {
     }
 }
 
-fn get_cpuinfo_contents() -> Result<String> {
-    let content = slurp(Path::new("/proc/cpuinfo")).context("failed to read cpuinfo")?;
-    Ok(content)
-}
+// --- Linux ---
 
+#[cfg(target_os = "linux")]
 fn get_cpu_info() -> Result<CPUFacts> {
-    let cpuinfo_contents = get_cpuinfo_contents()?;
+    use crate::filesystem::slurp;
+    use std::path::Path;
 
-    let cpu_count = get_cpu_count(&cpuinfo_contents);
-    let phys_core_count = get_physical_core_count(&cpuinfo_contents, cpu_count);
-    let log_core_count = get_logical_core_count(&cpuinfo_contents);
-    let arch = get_architecture(&cpuinfo_contents);
-
-    let model = get_cpu_model(&cpuinfo_contents);
-
-    let cf = CPUFacts {
+    let contents = slurp(Path::new("/proc/cpuinfo")).context("failed to read cpuinfo")?;
+    let cpu_count = get_cpu_count(&contents);
+    let phys_core_count = get_physical_core_count(&contents, cpu_count);
+    let log_core_count = get_logical_core_count(&contents);
+    let arch = get_architecture(&contents);
+    let model = get_cpu_model(&contents);
+    Ok(CPUFacts {
         count: cpu_count,
         physical_cores: phys_core_count,
         logical_cores: log_core_count,
         architecture: arch,
-        model: model,
-    };
-    Ok(cf)
+        model,
+    })
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn get_cpu_count(contents: &str) -> u32 {
+    use std::collections::HashSet;
     let ids: HashSet<&str> = contents
         .lines()
         .filter_map(|line| {
@@ -76,6 +68,7 @@ fn get_cpu_count(contents: &str) -> u32 {
     if ids.is_empty() { 1 } else { ids.len() as u32 }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn get_physical_core_count(contents: &str, cpu_count: u32) -> u32 {
     // "cpu cores" reports cores per socket on x86
     let cores_per_socket = contents.lines().find_map(|line| {
@@ -90,6 +83,7 @@ fn get_physical_core_count(contents: &str, cpu_count: u32) -> u32 {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn get_logical_core_count(contents: &str) -> u32 {
     contents
         .lines()
@@ -98,7 +92,12 @@ fn get_logical_core_count(contents: &str) -> u32 {
         .count() as u32
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn get_cpu_model(contents: &str) -> Vec<String> {
+    use crate::filesystem::slurp;
+    use std::collections::HashSet;
+    use std::path::Path;
+
     // x86: deduplicated "model name" values (multi-socket systems may have different CPUs)
     let models: HashSet<String> = contents
         .lines()
@@ -139,6 +138,7 @@ fn get_cpu_model(contents: &str) -> Vec<String> {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn get_architecture(contents: &str) -> String {
     // probably need to do better here...
     for line in contents.lines() {
@@ -166,6 +166,68 @@ fn get_architecture(contents: &str) -> String {
     }
     "unknown".to_string()
 }
+
+// --- macOS ---
+
+#[cfg(target_os = "macos")]
+fn get_cpu_info() -> Result<CPUFacts> {
+    use crate::filesystem::sysctl_n;
+    let count = sysctl_n("hw.packages")?.parse::<u32>().context("parsing hw.packages")?;
+    let physical_cores = sysctl_n("hw.physicalcpu")?.parse::<u32>().context("parsing hw.physicalcpu")?;
+    let logical_cores = sysctl_n("hw.logicalcpu")?.parse::<u32>().context("parsing hw.logicalcpu")?;
+    let model_str = sysctl_n("machdep.cpu.brand_string")?;
+    let model = if model_str.is_empty() { vec![] } else { vec![model_str] };
+    let architecture = sysctl_n("hw.machine")?;
+    Ok(CPUFacts { count, physical_cores, logical_cores, model, architecture })
+}
+
+// --- Windows ---
+
+#[cfg(target_os = "windows")]
+fn get_cpu_info() -> Result<CPUFacts> {
+    use crate::filesystem::run_powershell;
+    let script = concat!(
+        "$p = @(Get-CimInstance Win32_Processor);",
+        "Write-Output $p.Count;",
+        "Write-Output (($p | Measure-Object -Property NumberOfCores -Sum).Sum);",
+        "Write-Output (($p | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum);",
+        "Write-Output (($p | Select-Object -ExpandProperty Name -Unique) -join ',');",
+        "Write-Output $env:PROCESSOR_ARCHITECTURE",
+    );
+    parse_cpu_info_windows(&run_powershell(script)?)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn parse_cpu_info_windows(s: &str) -> Result<CPUFacts> {
+    let mut lines = s.lines();
+    let count = lines.next().context("missing cpu count")?.trim().parse::<u32>().context("parsing count")?;
+    let physical_cores = lines.next().context("missing physical cores")?.trim().parse::<u32>().context("parsing physical_cores")?;
+    let logical_cores = lines.next().context("missing logical cores")?.trim().parse::<u32>().context("parsing logical_cores")?;
+    let model_str = lines.next().context("missing model")?.trim().to_string();
+    let model = if model_str.is_empty() {
+        vec![]
+    } else {
+        model_str.split(',').map(|s| s.trim().to_string()).collect()
+    };
+    let architecture = lines.next().context("missing architecture")?.trim().to_string();
+
+    Ok(CPUFacts {
+        count,
+        physical_cores,
+        logical_cores,
+        model,
+        architecture,
+    })
+}
+
+// --- Fallback ---
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn get_cpu_info() -> Result<CPUFacts> {
+    anyhow::bail!("cpu not implemented on this platform")
+}
+
+// --- Tests ---
 
 #[cfg(test)]
 mod tests {
@@ -218,8 +280,6 @@ CPU architecture: 7
 CPU implementer	: 0x41
 CPU part	: 0xc09";
 
-    // --- get_architecture ---
-
     #[test]
     fn test_get_architecture_x86_64() {
         assert_eq!(get_architecture(X86_64_SINGLE), "x86_64");
@@ -242,10 +302,11 @@ CPU part	: 0xc09";
 
     #[test]
     fn test_get_architecture_unknown() {
-        assert_eq!(get_architecture("processor\t: 0\nvendor_id\t: GenuineIntel"), "unknown");
+        assert_eq!(
+            get_architecture("processor\t: 0\nvendor_id\t: GenuineIntel"),
+            "unknown"
+        );
     }
-
-    // --- get_cpu_count ---
 
     #[test]
     fn test_get_cpu_count_single_socket() {
@@ -263,8 +324,6 @@ CPU part	: 0xc09";
         assert_eq!(get_cpu_count(AARCH64), 1);
     }
 
-    // --- get_logical_core_count ---
-
     #[test]
     fn test_get_logical_core_count() {
         assert_eq!(get_logical_core_count(X86_64_SINGLE), 2);
@@ -272,8 +331,6 @@ CPU part	: 0xc09";
         assert_eq!(get_logical_core_count(AARCH64), 2);
         assert_eq!(get_logical_core_count(ARMV7), 1);
     }
-
-    // --- get_physical_core_count ---
 
     #[test]
     fn test_get_physical_core_count_x86_single_socket() {
@@ -290,10 +347,11 @@ CPU part	: 0xc09";
     #[test]
     fn test_get_physical_core_count_arm_falls_back_to_logical() {
         // ARM has no "cpu cores" field — physical == logical
-        assert_eq!(get_physical_core_count(AARCH64, 1), get_logical_core_count(AARCH64));
+        assert_eq!(
+            get_physical_core_count(AARCH64, 1),
+            get_logical_core_count(AARCH64)
+        );
     }
-
-    // --- get_cpu_model ---
 
     #[test]
     fn test_get_cpu_model_x86() {
@@ -334,5 +392,25 @@ physical id	: 1";
     #[test]
     fn test_get_cpu_model_empty_when_nothing_known() {
         assert_eq!(get_cpu_model("processor\t: 0"), vec![] as Vec<String>);
+    }
+
+    #[test]
+    fn test_parse_cpu_info_windows_single_socket() {
+        let s = "1\n6\n12\nIntel(R) Core(TM) i7-9750H CPU @ 2.60GHz\nAMD64\n";
+        let facts = parse_cpu_info_windows(s).unwrap();
+        assert_eq!(facts.count, 1);
+        assert_eq!(facts.physical_cores, 6);
+        assert_eq!(facts.logical_cores, 12);
+        assert_eq!(facts.model, vec!["Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz"]);
+        assert_eq!(facts.architecture, "AMD64");
+    }
+
+    #[test]
+    fn test_parse_cpu_info_windows_multi_socket() {
+        let s = "2\n8\n16\nIntel(R) Xeon(R) E5-2680,Intel(R) Xeon(R) E5-2690\nAMD64\n";
+        let facts = parse_cpu_info_windows(s).unwrap();
+        assert_eq!(facts.count, 2);
+        assert_eq!(facts.physical_cores, 8);
+        assert_eq!(facts.model.len(), 2);
     }
 }

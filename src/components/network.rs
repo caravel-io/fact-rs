@@ -89,7 +89,9 @@ struct AddrInfo {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn extract_addrs(addr_infos: &[AddrInfo]) -> (Option<String>, Option<u32>, Option<String>, Option<u32>) {
+fn extract_addrs(
+    addr_infos: &[AddrInfo],
+) -> (Option<String>, Option<u32>, Option<String>, Option<u32>) {
     let mut ip = None;
     let mut prefix = None;
     let mut ip6 = None;
@@ -181,7 +183,10 @@ fn get_all_ip_devices_output() -> Result<String> {
         .output()
         .context("failed to run ip -j addr show")?
         .stdout;
-    Ok(String::from_utf8(output).context("ip addr output is not valid UTF-8")?.trim_end().to_string())
+    Ok(String::from_utf8(output)
+        .context("ip addr output is not valid UTF-8")?
+        .trim_end()
+        .to_string())
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -204,6 +209,27 @@ struct IfconfigEntry {
     operational_state: String,
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn parse_resolv_conf(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(rest) = line
+            .strip_prefix("domain ")
+            .or_else(|| line.strip_prefix("search "))
+        {
+            let domain = rest.split_whitespace().next()?;
+            return parse_domain(domain);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn parse_domain_from_resolv_conf() -> Option<String> {
+    let content = std::fs::read_to_string("/etc/resolv.conf").ok()?;
+    parse_resolv_conf(&content)
+}
+
 #[cfg(target_os = "macos")]
 fn get_network_facts() -> Result<NetworkFacts> {
     use std::process::Command;
@@ -218,16 +244,7 @@ fn get_network_facts() -> Result<NetworkFacts> {
     .trim()
     .to_string();
 
-    let domain_str = String::from_utf8(
-        Command::new("domainname")
-            .output()
-            .context("failed to run domainname")?
-            .stdout,
-    )
-    .context("domainname output is not valid UTF-8")?
-    .trim()
-    .to_string();
-    let domain = parse_domain(&domain_str);
+    let domain = parse_domain_from_resolv_conf();
     let fqdn = build_fqdn(&hostname, &domain);
 
     let ifconfig_output = String::from_utf8(
@@ -248,7 +265,7 @@ fn get_network_facts() -> Result<NetworkFacts> {
     let mut primary_done = false;
 
     for entry in entries {
-        if !primary_done && entry.link_type == "ether" {
+        if !primary_done && entry.link_type == "ether" && entry.ip.is_some() {
             primary_ifname = Some(entry.name.clone());
             primary_ip = entry.ip.clone();
             primary_ip6 = entry.ip6.clone();
@@ -350,8 +367,12 @@ fn parse_ifconfig_output(s: &str) -> Vec<IfconfigEntry> {
                     .nth(1)
                     .and_then(netmask_to_prefix);
             } else if let Some(rest) = line.strip_prefix("status: ") {
-                entry.operational_state =
-                    if rest.trim() == "active" { "UP" } else { "DOWN" }.to_string();
+                entry.operational_state = if rest.trim() == "active" {
+                    "UP"
+                } else {
+                    "DOWN"
+                }
+                .to_string();
             }
         }
     }
@@ -436,7 +457,17 @@ fn parse_network_output_windows(s: &str) -> Result<NetworkFacts> {
 
         interfaces.insert(
             name.clone(),
-            Interface { name, ip, prefix, ip6, prefix6, mtu, mac, operational_state, link_type },
+            Interface {
+                name,
+                ip,
+                prefix,
+                ip6,
+                prefix6,
+                mtu,
+                mac,
+                operational_state,
+                link_type,
+            },
         );
     }
 
@@ -455,7 +486,11 @@ fn parse_network_output_windows(s: &str) -> Result<NetworkFacts> {
 
 #[cfg(any(target_os = "windows", test))]
 fn opt_str(s: &str) -> Option<String> {
-    if s.is_empty() { None } else { Some(s.to_string()) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 // --- Fallback ---
@@ -559,7 +594,10 @@ mod tests {
         let (ip, prefix, ip6, prefix6) = extract_addrs(&eth.addr_info);
         assert_eq!(ip.as_deref(), Some("192.168.64.8"));
         assert_eq!(prefix, Some(24));
-        assert_eq!(ip6.as_deref(), Some("fd08:b294:739c:b65:54a5:faff:fedc:8045"));
+        assert_eq!(
+            ip6.as_deref(),
+            Some("fd08:b294:739c:b65:54a5:faff:fedc:8045")
+        );
         assert_eq!(prefix6, Some(64));
 
         // loopback scope=host addresses should be included (only scope=link is skipped)
@@ -618,6 +656,24 @@ en0: flags=8863<UP,BROADCAST,MULTICAST> mtu 1500
     }
 
     // Windows: tab-separated output parsing
+
+    #[test]
+    fn test_parse_resolv_conf_domain() {
+        let input = "nameserver 8.8.8.8\ndomain example.com\n";
+        assert_eq!(parse_resolv_conf(input), Some("example.com".to_string()));
+    }
+
+    #[test]
+    fn test_parse_resolv_conf_search_takes_first() {
+        let input = "nameserver 8.8.8.8\nsearch example.com other.com\n";
+        assert_eq!(parse_resolv_conf(input), Some("example.com".to_string()));
+    }
+
+    #[test]
+    fn test_parse_resolv_conf_no_domain() {
+        let input = "nameserver 8.8.8.8\n";
+        assert_eq!(parse_resolv_conf(input), None);
+    }
 
     #[test]
     fn test_parse_network_output_windows() {
